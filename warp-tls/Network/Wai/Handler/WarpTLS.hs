@@ -22,6 +22,7 @@ module Network.Wai.Handler.WarpTLS (
     , tlsSettingsMemory
     , tlsSettingsChain
     , tlsSettingsChainMemory
+    , tlsServerSupported
     -- * Accessors
     , certFile
     , keyFile
@@ -37,6 +38,7 @@ module Network.Wai.Handler.WarpTLS (
     -- * Runner
     , runTLS
     , runTLSSocket
+    , runTLSSocketAuth
     -- * Exception
     , WarpTLSException (..)
     , DH.Params
@@ -56,9 +58,12 @@ import Data.Default.Class (def)
 import qualified Data.IORef as I
 import Data.Streaming.Network (bindPortTCP, safeRecv)
 import Data.Typeable (Typeable)
+import Data.X509 (CertificateChain(..))
+import Data.X509.Memory
 import Network.Socket (Socket, close, withSocketsDo, SockAddr, accept)
 import Network.Socket.ByteString (sendAll)
 import qualified Network.TLS as TLS
+import qualified Network.TLS.Internal as TLS
 import qualified Crypto.PubKey.DH as DH
 import qualified Network.TLS.Extra as TLSExtra
 import qualified Network.TLS.SessionManager as SM
@@ -66,6 +71,11 @@ import Network.Wai (Application)
 import Network.Wai.Handler.Warp
 import Network.Wai.Handler.Warp.Internal
 import System.IO.Error (isEOFError)
+
+import CertChain.CertChainRaw
+import Text.ProtocolBuffers        (messageGet, messagePut)
+import Data.Sequence (fromList)
+import Data.Foldable (toList)
 
 ----------------------------------------------------------------
 
@@ -124,6 +134,9 @@ data TLSSettings = TLSSettings {
     -- Default: def
     --
     -- Since 3.0.2
+
+  , tlsServerSupported :: TLS.Supported
+
   , tlsServerDHEParams :: Maybe DH.Params
     -- ^ Configuration for ServerDHEParams
     -- more function lives in `cryptonite` package
@@ -157,6 +170,7 @@ defaultTlsSettings = TLSSettings {
   , tlsCiphers = ciphers
   , tlsWantClientCert = False
   , tlsServerHooks = def
+  , tlsServerSupported = def
   , tlsServerDHEParams = Nothing
   , tlsSessionManagerConfig = Nothing
   }
@@ -256,8 +270,24 @@ runTLSSocket tlsset@TLSSettings{..} set sock app = do
       Just config -> SM.newSessionManager config
     runTLSSocket' tlsset set credential mgr sock app
 
+runTLSSocketAuth :: TLSSettings -> Settings -> Socket -> (CertificateChain -> Application) -> IO ()
+runTLSSocketAuth tlsset@TLSSettings{..} set sock app = do
+    credential <- case (certMemory, keyMemory) of
+        (Nothing, Nothing) ->
+            either error id <$>
+            TLS.credentialLoadX509Chain certFile chainCertFiles keyFile
+        (mcert, mkey) -> do
+            cert <- maybe (S.readFile certFile) return mcert
+            key <- maybe (S.readFile keyFile) return mkey
+            either error return $
+              TLS.credentialLoadX509ChainFromMemory cert chainCertsMemory key
+    mgr <- case tlsSessionManagerConfig of
+      Nothing     -> return TLS.noSessionManager
+      Just config -> SM.newSessionManager config
+    runTLSSocketAuth' tlsset set credential mgr sock app
+
 runTLSSocket' :: TLSSettings -> Settings -> TLS.Credential -> TLS.SessionManager -> Socket -> Application -> IO ()
-runTLSSocket' tlsset@TLSSettings{..} set credential mgr sock app =
+runTLSSocket' tlsset@TLSSettings{..} set credential mgr sock app = do
     runSettingsConnectionMakerSecure set get app
   where
     get = getter tlsset sock params
@@ -278,7 +308,8 @@ runTLSSocket' tlsset@TLSSettings{..} set credential mgr sock app =
         TLS.sharedCredentials    = TLS.Credentials [credential]
       , TLS.sharedSessionManager = mgr
       }
-    supported = def { -- TLS.Supported
+    supported = tlsServerSupported
+    {-def { -- TLS.Supported
         TLS.supportedVersions       = tlsAllowedVersions
       , TLS.supportedCiphers        = tlsCiphers
       , TLS.supportedCompressions   = [TLS.nullCompression]
@@ -286,7 +317,31 @@ runTLSSocket' tlsset@TLSSettings{..} set credential mgr sock app =
       , TLS.supportedClientInitiatedRenegotiation = False
       , TLS.supportedSession             = True
       , TLS.supportedFallbackScsv        = True
+      } -}
+
+runTLSSocketAuth' :: TLSSettings -> Settings -> TLS.Credential -> TLS.SessionManager -> Socket -> (CertificateChain -> Application) -> IO ()
+runTLSSocketAuth' tlsset@TLSSettings{..} set credential mgr sock app =
+    runSettingsConnectionMakerSecureAuth set get app
+  where
+    get = getter tlsset sock params
+    params = def { -- TLS.ServerParams
+        TLS.serverWantClientCert = tlsWantClientCert
+      , TLS.serverCACertificates = []
+      , TLS.serverDHEParams      = tlsServerDHEParams
+      , TLS.serverHooks          = hooks
+      , TLS.serverShared         = shared
+      , TLS.serverSupported      = supported
       }
+    -- Adding alpn to user's tlsServerHooks.
+    hooks = tlsServerHooks {
+        TLS.onALPNClientSuggest = TLS.onALPNClientSuggest tlsServerHooks <|>
+          (if settingsHTTP2Enabled set then Just alpn else Nothing)
+      }
+    shared = def {
+        TLS.sharedCredentials    = TLS.Credentials [credential]
+      , TLS.sharedSessionManager = mgr
+      }
+    supported = tlsServerSupported
 
 alpn :: [S.ByteString] -> IO S.ByteString
 alpn xs
@@ -316,11 +371,15 @@ httpOverTls :: TLS.TLSParams params => TLSSettings -> Socket -> S.ByteString -> 
 httpOverTls TLSSettings{..} s bs0 params = do
     recvN <- makePlainReceiveN s bs0
     ctx <- TLS.contextNew (backend recvN) params
+    TLS.checkMasterSecret 1 ctx
     TLS.contextHookSetLogging ctx tlsLogging
+    TLS.checkMasterSecret 2 ctx
     TLS.handshake ctx
+    TLS.checkMasterSecret 3 ctx
     writeBuf <- allocateBuffer bufferSize
     -- Creating a cache for leftover input data.
     ref <- I.newIORef ""
+
     tls <- getTLSinfo ctx
     return (conn ctx writeBuf ref, tls)
   where
@@ -339,6 +398,7 @@ httpOverTls TLSSettings{..} s bs0 params = do
       , connClose            = close'
       , connFree             = freeBuffer writeBuf
       , connRecv             = recv ref
+      , connRecvAuth         = recvAuth ref
       , connRecvBuf          = recvBuf ref
       , connWriteBuffer      = writeBuf
       , connBufferSize       = bufferSize
@@ -351,27 +411,66 @@ httpOverTls TLSSettings{..} s bs0 params = do
         close' = void (tryIO $ TLS.bye ctx) `finally`
                  TLS.contextClose ctx
 
+
+
         -- TLS version of recv with a cache for leftover input data.
         -- The cache is shared with recvBuf.
         recv cref = do
             cached <- I.readIORef cref
-            if cached /= "" then do
+            if cached /= ""
+              then do
                 I.writeIORef cref ""
                 return cached
-              else
-                recv'
+              else do 
+                x <- recv'
+                return x
+
 
         -- TLS version of recv (decrypting) without a cache.
         recv' = handle onEOF go
           where
-            onEOF e
-              | Just TLS.Error_EOF <- fromException e       = return S.empty
-              | Just ioe <- fromException e, isEOFError ioe = return S.empty                  | otherwise                                   = throwIO e
+            onEOF e 
+              | Just TLS.Error_EOF <- fromException e       = 
+                  return S.empty
+              | Just ioe <- fromException e, isEOFError ioe = 
+                  return S.empty
+              | otherwise                                   = 
+                  throwIO e
             go = do
                 x <- TLS.recvData ctx
-                if S.null x then
-                    go
-                  else
+                if S.null x
+                  then go
+                  else do
+                    return x
+
+        -- TLS version of recv with a cache for leftover input data.
+        -- The cache is shared with recvBuf.
+        recvAuth cref = do
+            cached <- I.readIORef cref
+            if cached /= ""
+              then do
+                I.writeIORef cref ""
+                return (CertificateChain [], cached)
+              else do 
+                x <- recvAuth'
+                return x
+
+
+        -- TLS version of recv (decrypting) without a cache.
+        recvAuth' = handle onEOF go
+          where
+            onEOF e 
+              | Just TLS.Error_EOF <- fromException e       = 
+                  return (CertificateChain [], S.empty)
+              | Just ioe <- fromException e, isEOFError ioe = 
+                  return (CertificateChain [], S.empty)
+              | otherwise                                   = 
+                  throwIO e
+            go = do
+                x <- TLS.recvAuthData ctx
+                if S.null (snd x)
+                  then go
+                  else do
                     return x
 
         -- TLS version of recvBuf with a cache for leftover input data.
@@ -381,7 +480,7 @@ httpOverTls TLSSettings{..} s bs0 params = do
             I.writeIORef cref leftover
             return ret
 
-fill :: S.ByteString -> Buffer -> BufSize -> Recv -> IO (Bool,S.ByteString)
+fill :: S.ByteString -> Buffer -> BufSize -> IO S.ByteString -> IO (Bool,S.ByteString)
 fill bs0 buf0 siz0 recv
   | siz0 <= len0 = do
       let (bs, leftover) = S.splitAt siz0 bs0
