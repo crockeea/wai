@@ -8,7 +8,7 @@ import Control.Exception
 import qualified Data.ByteString as S
 import Data.IORef (IORef, readIORef, writeIORef, newIORef)
 import Data.Typeable (Typeable)
-import Data.X509 (CertificateChain)
+import Data.X509 (CertificateChain(..))
 import Foreign.Ptr (Ptr)
 import System.Posix.Types (Fd)
 
@@ -17,7 +17,6 @@ import qualified Network.Wai.Handler.Warp.FdCache as F
 import qualified Network.Wai.Handler.Warp.FileInfoCache as I
 import Network.Wai.Handler.Warp.Imports
 import qualified Network.Wai.Handler.Warp.Timeout as T
-import Data.X509 (CertificateChain(..))
 
 ----------------------------------------------------------------
 

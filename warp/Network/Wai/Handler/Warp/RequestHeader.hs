@@ -74,6 +74,8 @@ parseRequestLine requestLine@(PS fptr off len) = withForeignPtr fptr $ \ptr -> d
     let httpptr = httpptr0 `plusPtr` 1
         lim2 = fromIntegral (httpptr0 `minusPtr` pathptr)
 
+    -- EAC: Commenting out checkHTTP (and its definition below) 
+    -- mysteriously works around GHC bug #16166
     --checkHTTP httpptr
     !hv <- httpVersion httpptr
     queryptr <- memchr pathptr 63 lim2 -- '?'

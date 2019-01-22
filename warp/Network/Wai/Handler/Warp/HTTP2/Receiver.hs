@@ -10,7 +10,6 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import qualified Control.Exception as E
 import qualified Data.ByteString as BS
-import Data.IORef
 import qualified Data.ByteString.Char8 as C8
 import Data.IORef
 import Network.HPACK

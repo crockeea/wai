@@ -328,13 +328,13 @@ fork :: Settings
      -> Counter
      -> InternalInfo0
      -> IO ()
-fork set mkConn addr app counter ii0 = settingsFork set $ \unmask -> do
+fork set mkConn addr app counter ii0 = settingsFork set $ \unmask ->
     -- Call the user-supplied on exception code if any
     -- exceptions are thrown.
     handle (settingsOnException set Nothing) .
     -- Allocate a new IORef indicating whether the connection has been
     -- closed, to avoid double-freeing a connection
-      withClosedRef $ \ref ->
+    withClosedRef $ \ref ->
         -- Run the connection maker to get a new connection, and ensure
         -- that the connection is closed. If the mkConn call throws an
         -- exception, we will leak the connection. If the mkConn call is
