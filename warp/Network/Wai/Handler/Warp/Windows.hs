@@ -7,8 +7,12 @@ module Network.Wai.Handler.Warp.Windows
 import Control.Exception
 import Control.Concurrent.MVar
 import Control.Concurrent
-import Control.Monad
 
+import Network.Wai.Handler.Warp.Imports
+
+-- | Allow main socket listening thread to be interrupted on Windows platform
+--
+-- @since 3.2.17
 windowsThreadBlockHack :: IO a -> IO a
 windowsThreadBlockHack act = do
     var <- newEmptyMVar :: IO (MVar (Either SomeException a))

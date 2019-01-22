@@ -6,13 +6,8 @@ module Network.Wai.Handler.Warp.Settings where
 
 import Control.Concurrent (forkIOWithUnmask)
 import Control.Exception
-import Control.Monad (when, void)
-import Data.ByteString (ByteString)
-import qualified Data.ByteString.Char8 as S8
 import Data.ByteString.Builder (byteString)
-#if __GLASGOW_HASKELL__ < 709
-import Data.Monoid (mappend)
-#endif
+import qualified Data.ByteString.Char8 as C8
 import Data.Streaming.Network (HostPreference)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -21,11 +16,13 @@ import GHC.IO.Exception (IOErrorType(..))
 import qualified Network.HTTP.Types as H
 import Network.Socket (SockAddr)
 import Network.Wai
-import Network.Wai.Handler.Warp.Timeout
-import Network.Wai.Handler.Warp.Types
 import qualified Paths_warp
 import System.IO (stderr)
 import System.IO.Error (ioeGetErrorType)
+
+import Network.Wai.Handler.Warp.Imports
+import Network.Wai.Handler.Warp.Timeout
+import Network.Wai.Handler.Warp.Types
 
 -- | Various Warp server settings. This is purposely kept as an abstract data
 -- type so that new settings can be added without breaking backwards
@@ -138,7 +135,7 @@ defaultSettings = Settings
     , settingsFork = void . forkIOWithUnmask
     , settingsNoParsePath = False
     , settingsInstallShutdownHandler = const $ return ()
-    , settingsServerName = S8.pack $ "Warp/" ++ showVersion Paths_warp.version
+    , settingsServerName = C8.pack $ "Warp/" ++ showVersion Paths_warp.version
     , settingsMaximumBodyFlush = Just 8192
     , settingsProxyProtocol = ProxyProtocolNone
     , settingsSlowlorisSize = 2048
@@ -187,4 +184,4 @@ exceptionResponseForDebug :: SomeException -> Response
 exceptionResponseForDebug e =
     responseBuilder H.internalServerError500
                     [(H.hContentType, "text/plain; charset=utf-8")]
-                    $ byteString . S8.pack $ "Exception: " ++ show e
+                    $ byteString . C8.pack $ "Exception: " ++ show e

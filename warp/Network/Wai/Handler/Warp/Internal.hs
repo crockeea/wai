@@ -65,6 +65,9 @@ module Network.Wai.Handler.Warp.Internal (
   , Source
   , recvRequest
   , sendResponse
+    -- * Platform dependent helper functions
+  , setSocketCloseOnExec
+  , windowsThreadBlockHack
   ) where
 
 import Network.Wai.Handler.Warp.Buffer
@@ -80,3 +83,4 @@ import Network.Wai.Handler.Warp.SendFile
 import Network.Wai.Handler.Warp.Settings
 import Network.Wai.Handler.Warp.Timeout
 import Network.Wai.Handler.Warp.Types
+import Network.Wai.Handler.Warp.Windows

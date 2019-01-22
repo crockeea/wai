@@ -5,11 +5,8 @@ module Network.Wai.Handler.Warp.Date (
   , GMTDate
   ) where
 
-#if __GLASGOW_HASKELL__ < 709
-import Control.Applicative
-#endif
 import Control.AutoUpdate (defaultUpdateSettings, updateAction, mkAutoUpdate)
-import Data.ByteString.Char8
+import Data.ByteString
 import Network.HTTP.Date
 
 #if WINDOWS

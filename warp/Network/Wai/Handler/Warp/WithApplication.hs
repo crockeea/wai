@@ -1,4 +1,4 @@
-
+{-# LANGUAGE OverloadedStrings #-}
 module Network.Wai.Handler.Warp.WithApplication (
   withApplication,
   withApplicationSettings,
@@ -11,6 +11,8 @@ module Network.Wai.Handler.Warp.WithApplication (
 import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Exception
+import           Control.Monad (when)
+import           Data.Streaming.Network (bindRandomPortTCP)
 import           Network.Socket
 import           Network.Wai
 import           Network.Wai.Handler.Warp.Run
@@ -66,14 +68,16 @@ testWithApplication = testWithApplicationSettings defaultSettings
 --
 -- @since 3.2.7
 testWithApplicationSettings :: Settings -> IO Application -> (Port -> IO a) -> IO a
-testWithApplicationSettings _settings mkApp action = do
+testWithApplicationSettings settings mkApp action = do
   callingThread <- myThreadId
   app <- mkApp
   let wrappedApp request respond =
         app request respond `catch` \ e -> do
-          throwTo callingThread (e :: SomeException)
+          when
+            (defaultShouldDisplayException e)
+            (throwTo callingThread e)
           throwIO e
-  withApplication (return wrappedApp) action
+  withApplicationSettings settings (return wrappedApp) action
 
 data Waiter a
   = Waiter {
@@ -84,7 +88,7 @@ data Waiter a
 mkWaiter :: IO (Waiter a)
 mkWaiter = do
   mvar <- newEmptyMVar
-  return $ Waiter {
+  return Waiter {
     notify = putMVar mvar,
     waitFor = readMVar mvar
   }
@@ -93,13 +97,7 @@ mkWaiter = do
 --
 -- @since 3.2.4
 openFreePort :: IO (Port, Socket)
-openFreePort = do
-  s <- socket AF_INET Stream defaultProtocol
-  localhost <- inet_addr "127.0.0.1"
-  bind s (SockAddrInet aNY_PORT localhost)
-  listen s 1
-  port <- socketPort s
-  return (fromIntegral port, s)
+openFreePort = bindRandomPortTCP "127.0.0.1"
 
 -- | Like 'openFreePort' but closes the socket before exiting.
 withFreePort :: ((Port, Socket) -> IO a) -> IO a

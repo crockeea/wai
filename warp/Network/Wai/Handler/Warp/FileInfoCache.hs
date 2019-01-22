@@ -8,13 +8,13 @@ module Network.Wai.Handler.Warp.FileInfoCache (
   ) where
 
 import Control.Exception as E
-import Control.Monad (void)
 import Control.Reaper
-import Data.ByteString (ByteString)
 import Network.HTTP.Date
+import System.PosixCompat.Files
+
 import Network.Wai.Handler.Warp.HashMap (HashMap)
 import qualified Network.Wai.Handler.Warp.HashMap as M
-import System.PosixCompat.Files
+import Network.Wai.Handler.Warp.Imports
 
 ----------------------------------------------------------------
 
@@ -91,7 +91,7 @@ withFileInfoCache 0        action = action getInfoNaive
 withFileInfoCache duration action =
     E.bracket (initialize duration)
               terminate
-              (\r -> action (getAndRegisterInfo r))
+              (action . getAndRegisterInfo)
 
 initialize :: Hash -> IO FileInfoCache
 initialize duration = mkReaper settings

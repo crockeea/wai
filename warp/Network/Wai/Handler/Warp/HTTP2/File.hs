@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE BangPatterns, RecordWildCards #-}
+{-# LANGUAGE BangPatterns #-}
 
 module Network.Wai.Handler.Warp.HTTP2.File (
     RspFileInfo(..)
@@ -9,18 +9,16 @@ module Network.Wai.Handler.Warp.HTTP2.File (
   , H.parseByteRanges
   ) where
 
-import Control.Applicative ((<|>))
-import qualified Data.ByteString.Char8 as B (pack)
-import Data.ByteString (ByteString)
-import Data.Maybe (fromMaybe)
+import qualified Data.ByteString.Char8 as C8 (pack)
+import Network.HPACK
+import Network.HPACK.Token
 import Network.HTTP.Date
 import qualified Network.HTTP.Types as H
 import Network.Wai
+
 import qualified Network.Wai.Handler.Warp.FileInfoCache as I
+import Network.Wai.Handler.Warp.Imports
 import Network.Wai.Handler.Warp.PackInt
-import Numeric (showInt)
-import Network.HPACK
-import Network.HPACK.Token
 
 -- $setup
 -- >>> import Test.QuickCheck
@@ -124,7 +122,7 @@ checkRange (H.ByteRangeSuffix count)   size = (max 0 (size - count), size - 1)
 contentRangeHeader :: Integer -> Integer -> Integer -> TokenHeader
 contentRangeHeader beg end total = (tokenContentRange, range)
   where
-    range = B.pack
+    range = C8.pack
       -- building with ShowS
       $ 'b' : 'y': 't' : 'e' : 's' : ' '
       : (if beg > end then ('*':) else

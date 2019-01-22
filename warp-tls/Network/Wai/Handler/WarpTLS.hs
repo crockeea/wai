@@ -4,7 +4,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE PatternGuards #-}
-{-# LANGUAGE CPP #-}
 
 -- | HTTP over TLS support for Warp via the TLS package.
 --
@@ -45,13 +44,10 @@ module Network.Wai.Handler.WarpTLS (
     , DH.generateParams
     ) where
 
-#if __GLASGOW_HASKELL__ < 709
-import Control.Applicative ((<$>))
-#endif
 import Control.Applicative ((<|>))
-import Control.Exception (Exception, throwIO, bracket, finally, handle, fromException, try, IOException, onException, SomeException(..))
+import Control.Exception (Exception, throwIO, bracket, finally, handle, fromException, try, IOException, onException, SomeException(..), handleJust)
 import qualified Control.Exception as E
-import Control.Monad (void)
+import Control.Monad (void, guard)
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Lazy as L
 import Data.Default.Class (def)
@@ -352,7 +348,12 @@ alpn xs
 
 getter :: TLS.TLSParams params => TLSSettings -> Socket -> params -> IO (IO (Connection, Transport), SockAddr)
 getter tlsset@TLSSettings{..} sock params = do
+#if WINDOWS
+    (s, sa) <- windowsThreadBlockHack $ accept sock
+#else
     (s, sa) <- accept sock
+#endif
+    setSocketCloseOnExec s
     return (mkConn tlsset s params, sa)
 
 mkConn :: TLS.TLSParams params => TLSSettings -> Socket -> params -> IO (Connection, Transport)
@@ -408,10 +409,16 @@ httpOverTls TLSSettings{..} s bs0 params = do
         sendfile fid offset len hook headers =
             readSendFile writeBuf bufferSize sendall fid offset len hook headers
 
-        close' = void (tryIO $ TLS.bye ctx) `finally`
+        close' = void (tryIO sendBye) `finally`
                  TLS.contextClose ctx
 
-
+        sendBye =
+          -- It's fine if the connection was closed by the other side before
+          -- receiving close_notify, see RFC 5246 section 7.2.1.
+          handleJust
+            (\e -> guard (e == ConnectionClosedByPeer) >> return e)
+            (const (return ()))
+            (TLS.bye ctx)
 
         -- TLS version of recv with a cache for leftover input data.
         -- The cache is shared with recvBuf.

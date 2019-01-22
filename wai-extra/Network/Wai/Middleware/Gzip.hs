@@ -30,14 +30,14 @@ import Data.Default.Class
 import Network.HTTP.Types ( Status, Header, hContentEncoding, hUserAgent
                           , hContentType, hContentLength)
 import System.Directory (doesFileExist, createDirectoryIfMissing)
-import Blaze.ByteString.Builder (fromByteString)
+import Data.ByteString.Builder (byteString)
+import qualified Data.ByteString.Builder.Extra as Blaze (flush)
 import Control.Exception (try, SomeException)
 import qualified Data.Set as Set
 import Network.Wai.Header
 import Network.Wai.Internal
-import qualified Data.Streaming.Blaze as B
+import qualified Data.Streaming.ByteString.Builder as B
 import qualified Data.Streaming.Zlib as Z
-import qualified Blaze.ByteString.Builder as Blaze
 import Control.Monad (unless)
 import Data.Function (fix)
 import Control.Exception (throwIO)
@@ -69,7 +69,7 @@ instance Default GzipSettings where
     def = GzipSettings GzipIgnore defaultCheckMime
 
 -- | MIME types that will be compressed by default:
--- @text/*@, @application/json@, @application/javascript@,
+-- @text/@ @*@, @application/json@, @application/javascript@,
 -- @application/ecmascript@, @image/x-icon@.
 defaultCheckMime :: S.ByteString -> Bool
 defaultCheckMime bs =
@@ -101,8 +101,8 @@ gzip set app env sendResponse = app env $ \res ->
                                  let
                                     compressedVersion = file ++ ".gz"
                                  in
-                                    doesFileExist compressedVersion >>= \x ->
-                                       if x
+                                    doesFileExist compressedVersion >>= \y ->
+                                       if y
                                          then (sendResponse $ ResponseFile s (fixHeaders hs) compressedVersion Nothing)
                                          else (runAction (ResponseFile s hs file Nothing, nextAction))
                             (ResponseFile s hs file Nothing, GzipCacheFolder cache) ->
@@ -182,7 +182,7 @@ compressE set res sendResponse =
         Just m | gzipCheckMime set m ->
             let hs' = fixHeaders hs
              in wb $ \body -> sendResponse $ responseStream s hs' $ \sendChunk flush -> do
-                    (blazeRecv, _) <- B.newBlazeRecv B.defaultStrategy
+                    (blazeRecv, _) <- B.newBuilderRecv B.defaultStrategy
                     deflate <- Z.initDeflate 1 (Z.WindowBits 31)
                     let sendBuilder builder = do
                             popper <- blazeRecv builder
@@ -201,7 +201,7 @@ compressE set res sendResponse =
                             case result of
                                 Z.PRDone -> return ()
                                 Z.PRNext bs' -> do
-                                    sendChunk $ fromByteString bs'
+                                    sendChunk $ byteString bs'
                                     loop
                                 Z.PRError e -> throwIO e
 

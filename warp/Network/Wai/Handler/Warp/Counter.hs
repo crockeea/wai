@@ -8,11 +8,10 @@ module Network.Wai.Handler.Warp.Counter (
   , decrease
   ) where
 
-#if __GLASGOW_HASKELL__ < 709
-import Control.Applicative ((<$>))
-#endif
 import Control.Concurrent.STM
-import Control.Monad (unless)
+
+import Network.Wai.Handler.Warp.Imports
+
 
 newtype Counter = Counter (TVar Int)
 

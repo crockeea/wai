@@ -1,5 +1,48 @@
+## 3.2.20
+* Fixing "Thread killed by timeout reaper when sending large HTTP/2 response"
+  [#593](https://github.com/yesodweb/wai/issues/593)
+
+## 3.2.19
+* Fixing 0-length body in HTTP/2
+  [#597](https://github.com/yesodweb/wai/issues/597)
+  [#679](https://github.com/yesodweb/wai/issues/679)
+
+## 3.2.18.2
+
+* Replace dependency on `blaze-builder` with `bsb-http-chunked`
+
+## 3.2.18.1
+
+* Fix benchmark compilation [#681](https://github.com/yesodweb/wai/issues/681)
+
+## 3.2.18
+
+* Make `testWithApplicationSettings` actually use the settings passed.
+  [#677](https://github.com/yesodweb/wai/pull/677).
+
+## 3.2.17
+* Add support for windows thread block hack and closeOnExec to TLS.
+  [#674](https://github.com/yesodweb/wai/pull/674).
+
+## 3.2.16
+
+* In `testWithApplication`, don't `throwTo` ignorable exceptions
+  [#671](https://github.com/yesodweb/wai/issues/671), and
+  reuse `bindRandomPortTCP`
+
+## 3.2.15
+
+* Address space leak from exception handlers
+  [#649](https://github.com/yesodweb/wai/issues/649)
+
+## 3.2.14
+
+* Support streaming-commons 0.2
+* Warnings cleanup
+
 ## 3.2.13
 
+* Tickling HTTP/2 timer. [624](https://github.com/yesodweb/wai/pull/624)
 * Guarantee atomicity of WINDOW_UPDATE increments [622](https://github.com/yesodweb/wai/pull/622)
 * Relax HTTP2 headers check [621](https://github.com/yesodweb/wai/pull/621)
 

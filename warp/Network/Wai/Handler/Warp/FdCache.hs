@@ -14,13 +14,10 @@ module Network.Wai.Handler.Warp.FdCache (
   ) where
 
 #ifndef WINDOWS
-#if __GLASGOW_HASKELL__ < 709
-import Control.Applicative ((<$>), (<*>))
-#endif
 import Control.Exception (bracket)
-import Network.Wai.Handler.Warp.IORef
-import Network.Wai.Handler.Warp.MultiMap
 import Control.Reaper
+import Data.IORef
+import Network.Wai.Handler.Warp.MultiMap
 import System.Posix.IO (openFd, OpenFileFlags(..), defaultFileFlags, OpenMode(ReadOnly), closeFd, FdOption(CloseOnExec), setFdOption)
 #endif
 import System.Posix.Types (Fd)
@@ -46,7 +43,7 @@ withFdCache _        action = action getFdNothing
 withFdCache 0        action = action getFdNothing
 withFdCache duration action = bracket (initialize duration)
                                       terminate
-                                      (\mfc -> action (getFd mfc))
+                                      (action . getFd)
 
 ----------------------------------------------------------------
 

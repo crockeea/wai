@@ -5,18 +5,18 @@
 module Network.Wai.Handler.Warp.Types where
 
 import Control.Exception
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as S
 import Data.IORef (IORef, readIORef, writeIORef, newIORef)
 import Data.Typeable (Typeable)
-import Data.Word (Word16, Word8)
 import Data.X509 (CertificateChain)
 import Foreign.Ptr (Ptr)
+import System.Posix.Types (Fd)
+
 import qualified Network.Wai.Handler.Warp.Date as D
 import qualified Network.Wai.Handler.Warp.FdCache as F
 import qualified Network.Wai.Handler.Warp.FileInfoCache as I
+import Network.Wai.Handler.Warp.Imports
 import qualified Network.Wai.Handler.Warp.Timeout as T
-import System.Posix.Types (Fd)
 import Data.X509 (CertificateChain(..))
 
 ----------------------------------------------------------------

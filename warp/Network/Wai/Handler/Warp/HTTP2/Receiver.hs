@@ -6,24 +6,21 @@
 
 module Network.Wai.Handler.Warp.HTTP2.Receiver (frameReceiver) where
 
-#if __GLASGOW_HASKELL__ < 709
-import Control.Applicative
-#endif
 import Control.Concurrent
 import Control.Concurrent.STM
 import qualified Control.Exception as E
-import Control.Monad (when, unless, void)
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.IORef
 import Network.HPACK
 import Network.HPACK.Token
 import Network.HTTP2
 import Network.HTTP2.Priority (toPrecedence, delete, prepare)
+
 import Network.Wai.Handler.Warp.HTTP2.EncodeFrame
 import Network.Wai.Handler.Warp.HTTP2.HPACK
 import Network.Wai.Handler.Warp.HTTP2.Request
 import Network.Wai.Handler.Warp.HTTP2.Types
-import Network.Wai.Handler.Warp.IORef
+import Network.Wai.Handler.Warp.Imports hiding (delete, insert, readInt)
 import Network.Wai.Handler.Warp.ReadInt
 import Network.Wai.Handler.Warp.Types
 
@@ -118,7 +115,7 @@ frameReceiver ctx mkreq recvN = loop 0 `E.catch` sendGoaway
                   Open (NoBody tbl@(_,reqvt) pri) -> do
                       resetContinued
                       let mcl = readInt <$> getHeaderValue tokenContentLength reqvt
-                      when (just mcl (== (0 :: Int))) $
+                      when (just mcl (/= (0 :: Int))) $
                           E.throwIO $ StreamError ProtocolError streamId
                       writeIORef streamPrecedence $ toPrecedence pri
                       writeIORef streamState HalfClosed
@@ -168,7 +165,7 @@ frameReceiver ctx mkreq recvN = loop 0 `E.catch` sendGoaway
                          when (ftyp `notElem` [FrameHeaders,FramePriority]) $
                              E.throwIO $ ConnectionError ProtocolError "this frame is not allowed in an idel stream"
                          csid <- readIORef clientStreamId
-                         if streamId <= csid then do
+                         if streamId <= csid then
                              if ftyp == FramePriority then
                                  return Nothing -- will be ignored
                                else

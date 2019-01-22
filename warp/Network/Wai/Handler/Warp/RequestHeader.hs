@@ -1,4 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
 
 module Network.Wai.Handler.Warp.RequestHeader (
@@ -6,16 +5,16 @@ module Network.Wai.Handler.Warp.RequestHeader (
     ) where
 
 import Control.Exception (throwIO)
-import Control.Monad (when)
 import qualified Data.ByteString as S
-import qualified Data.ByteString.Char8 as B (unpack)
-import Data.ByteString.Internal (ByteString(..), memchr)
+import qualified Data.ByteString.Char8 as C8 (unpack)
+import Data.ByteString.Internal (memchr)
 import qualified Data.CaseInsensitive as CI
-import Data.Word (Word8)
 import Foreign.ForeignPtr (withForeignPtr)
 import Foreign.Ptr (Ptr, plusPtr, minusPtr, nullPtr)
 import Foreign.Storable (peek)
 import qualified Network.HTTP.Types as H
+
+import Network.Wai.Handler.Warp.Imports
 import Network.Wai.Handler.Warp.Types
 
 -- $setup
@@ -75,7 +74,7 @@ parseRequestLine requestLine@(PS fptr off len) = withForeignPtr fptr $ \ptr -> d
     let httpptr = httpptr0 `plusPtr` 1
         lim2 = fromIntegral (httpptr0 `minusPtr` pathptr)
 
-    checkHTTP httpptr
+    --checkHTTP httpptr
     !hv <- httpVersion httpptr
     queryptr <- memchr pathptr 63 lim2 -- '?'
 
@@ -89,18 +88,18 @@ parseRequestLine requestLine@(PS fptr off len) = withForeignPtr fptr $ \ptr -> d
 
     return (method,path,query,hv)
   where
-    baderr = BadFirstLine $ B.unpack requestLine
+    baderr = BadFirstLine $ C8.unpack requestLine
     check :: Ptr Word8 -> Int -> Word8 -> IO ()
     check p n w = do
         w0 <- peek $ p `plusPtr` n
         when (w0 /= w) $ throwIO NonHttp
-    checkHTTP httpptr = do
-        check httpptr 0 72 -- 'H'
-        check httpptr 1 84 -- 'T'
-        check httpptr 2 84 -- 'T'
-        check httpptr 3 80 -- 'P'
-        check httpptr 4 47 -- '/'
-        check httpptr 6 46 -- '.'
+    -- checkHTTP httpptr = do
+    --     check httpptr 0 72 -- 'H'
+    --     check httpptr 1 84 -- 'T'
+    --     check httpptr 2 84 -- 'T'
+    --     check httpptr 3 80 -- 'P'
+    --     check httpptr 4 47 -- '/'
+    --     check httpptr 6 46 -- '.'
     httpVersion httpptr = do
         major <- peek (httpptr `plusPtr` 5) :: IO Word8
         minor <- peek (httpptr `plusPtr` 7) :: IO Word8

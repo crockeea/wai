@@ -3,17 +3,15 @@
 
 module Network.Wai.Handler.Warp.ResponseHeader (composeHeader) where
 
-import Control.Monad
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as S
 import Data.ByteString.Internal (create)
 import qualified Data.CaseInsensitive as CI
-import Data.List (foldl')
-import Data.Word (Word8)
 import Foreign.Ptr
 import GHC.Storable
 import qualified Network.HTTP.Types as H
+
 import Network.Wai.Handler.Warp.Buffer (copy)
+import Network.Wai.Handler.Warp.Imports
 
 ----------------------------------------------------------------
 
@@ -24,7 +22,7 @@ composeHeader !httpversion !status !responseHeaders = create len $ \ptr -> do
     void $ copyCRLF ptr2
   where
     !len = 17 + slen + foldl' fieldLength 0 responseHeaders
-    fieldLength !l !(k,v) = l + S.length (CI.original k) + S.length v + 4
+    fieldLength !l (!k,!v) = l + S.length (CI.original k) + S.length v + 4
     !slen = S.length $ H.statusMessage status
 
 httpVer11 :: ByteString

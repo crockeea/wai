@@ -1,5 +1,5 @@
 Name:                warp-tls
-Version:             3.2.5
+Version:             3.2.4.3
 Synopsis:            HTTP over TLS support for Warp via the TLS package
 License:             MIT
 License-file:        LICENSE
@@ -18,23 +18,26 @@ description:         SSLv1 and SSLv2 are obsoleted by IETF.
 extra-source-files:  ChangeLog.md README.md
 
 Library
-  Build-Depends:     base                          >= 4        && < 5
+  Build-Depends:     base                          >= 4.8      && < 5
                    , bytestring                    >= 0.9
                    , containers
                    , wai                           >= 3.2      && < 3.3
-                   , warp                          >= 3.2.10   && < 3.3
+                   , warp                          >= 3.2.17   && < 3.3
                    , data-default-class            >= 0.0.1
                    , tls                           >= 1.3.10
                    , cryptonite                    >= 0.12
                    , network                       >= 2.2.1
                    , protocol-buffers
                    , streaming-commons
-                   , tls-session-manager
+                   , tls-session-manager           >= 0.0.0.1
                    , x509
                    , x509-store
   Exposed-modules:   Network.Wai.Handler.WarpTLS
   other-modules:     CertChain.CertChainRaw
   ghc-options:       -Wall
+  if os(windows)
+      Cpp-Options:   -DWINDOWS
+
 
 source-repository head
   type:     git

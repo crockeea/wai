@@ -9,26 +9,24 @@
 
 module Network.Wai.Handler.Warp.Run where
 
-#if __GLASGOW_HASKELL__ < 709
-import Control.Applicative ((<$>))
-#endif
+import "iproute" Data.IP (toHostAddress, toHostAddress6)
 import Control.Arrow (first)
 import qualified Control.Concurrent as Conc (yield)
 import Control.Exception as E
-import Control.Monad (when, unless, void)
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as S
 import Data.Char (chr)
-import "iproute" Data.IP (toHostAddress, toHostAddress6)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef')
 import Data.Streaming.Network (bindPortTCP)
 import Data.X509 (CertificateChain)
 import Foreign.C.Error (Errno(..), eCONNABORTED)
 import GHC.IO.Exception (IOException(..))
-import Network (Socket)
-import Network.Socket (close, accept, withSocketsDo, SockAddr(SockAddrInet, SockAddrInet6), setSocketOption, SocketOption(..))
+import Network.Socket (Socket, close, accept, withSocketsDo, SockAddr(SockAddrInet, SockAddrInet6), setSocketOption, SocketOption(..))
 import qualified Network.Socket.ByteString as Sock
 import Network.Wai
+import Network.Wai.Internal (ResponseReceived (ResponseReceived))
+import System.Environment (getEnvironment)
+import System.Timeout (timeout)
+
 import Network.Wai.Handler.Warp.Buffer
 import Network.Wai.Handler.Warp.Counter
 import qualified Network.Wai.Handler.Warp.Date as D
@@ -36,7 +34,7 @@ import qualified Network.Wai.Handler.Warp.FdCache as F
 import qualified Network.Wai.Handler.Warp.FileInfoCache as I
 import Network.Wai.Handler.Warp.HTTP2 (http2, isHTTP2)
 import Network.Wai.Handler.Warp.Header
-import Network.Wai.Handler.Warp.IORef
+import Network.Wai.Handler.Warp.Imports hiding (readInt)
 import Network.Wai.Handler.Warp.ReadInt
 import Network.Wai.Handler.Warp.Recv
 import Network.Wai.Handler.Warp.Request
@@ -45,9 +43,7 @@ import Network.Wai.Handler.Warp.SendFile
 import Network.Wai.Handler.Warp.Settings
 import qualified Network.Wai.Handler.Warp.Timeout as T
 import Network.Wai.Handler.Warp.Types
-import Network.Wai.Internal (ResponseReceived (ResponseReceived))
-import System.Environment (getEnvironment)
-import System.Timeout (timeout)
+
 
 #if WINDOWS
 import Network.Wai.Handler.Warp.Windows
@@ -72,11 +68,6 @@ socketConnection s = do
       , connWriteBuffer = writeBuf
       , connBufferSize = bufferSize
       }
-
-#if __GLASGOW_HASKELL__ < 702
-allowInterrupt :: IO ()
-allowInterrupt = unblock $ return ()
-#endif
 
 -- | Run an 'Application' on the given port.
 -- This calls 'runSettings' with 'defaultSettings'.
@@ -469,9 +460,14 @@ serveConnection conn ii1 origAddr transport settings app = do
         writeIORef istatus True
         leftoverSource src bs
         addr <- getProxyProtocolAddr src
-        http1 True addr istatus src `E.catch` \e -> do
-            sendErrorResponse addr istatus e
-            throwIO (e :: SomeException)
+        http1 True addr istatus src `E.catch` \e ->
+          case fromException e of
+            -- See comment below referencing
+            -- https://github.com/yesodweb/wai/issues/618
+            Just NoKeepAliveRequest -> return ()
+            Nothing -> do
+              sendErrorResponse addr istatus e
+              throwIO e
   where
     getProxyProtocolAddr src =
         case settingsProxyProtocol settings of
@@ -549,7 +545,7 @@ serveConnection conn ii1 origAddr transport settings app = do
         -- request headers, no data is available, recvRequest will
         -- throw a NoKeepAliveRequest exception, which we catch here
         -- and ignore. See: https://github.com/yesodweb/wai/issues/618
-        when keepAlive $ http1 False addr istatus src `E.catch` \NoKeepAliveRequest -> return ()
+        when keepAlive $ http1 False addr istatus src
 
     processRequest istatus src req mremainingRef idxhdr nextBodyFlush ii = do
         -- Let the application run for as long as it wants
@@ -830,7 +826,11 @@ wrappedRecvN th istatus slowlorisSize readN bufsize = do
         when (S.length bs >= slowlorisSize || bufsize <= slowlorisSize) $ T.tickle th
     return bs
 
+-- | Set flag FileCloseOnExec flag on a socket (on Unix)
+--
 -- Copied from: https://github.com/mzero/plush/blob/master/src/Plush/Server/Warp.hs
+--
+-- @since 3.2.17
 setSocketCloseOnExec :: Socket -> IO ()
 #if WINDOWS
 setSocketCloseOnExec _ = return ()

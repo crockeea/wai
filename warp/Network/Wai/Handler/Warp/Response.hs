@@ -1,6 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE BangPatterns #-}
@@ -14,56 +13,34 @@ module Network.Wai.Handler.Warp.Response (
   , addServer -- testing
   ) where
 
-#ifndef MIN_VERSION_base
-#define MIN_VERSION_base(x,y,z) 1
-#endif
-
-import Blaze.ByteString.Builder.HTTP (chunkedTransferEncoding, chunkedTransferTerminator)
-#if __GLASGOW_HASKELL__ < 709
-import Control.Applicative
-#endif
+import Data.ByteString.Builder.HTTP.Chunked (chunkedTransferEncoding, chunkedTransferTerminator)
 import qualified Control.Exception as E
-import Control.Monad (unless, when)
 import Data.Array ((!))
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as S
-import qualified Data.ByteString.Char8 as S8
 import Data.ByteString.Builder (byteString, Builder)
 import Data.ByteString.Builder.Extra (flush)
+import qualified Data.ByteString.Char8 as C8
 import qualified Data.CaseInsensitive as CI
 import Data.Function (on)
-import Data.List (deleteBy)
-import Data.Maybe
-#if MIN_VERSION_base(4,5,0)
-# if __GLASGOW_HASKELL__ < 709
-import Data.Monoid (mempty)
-# endif
-import Data.Monoid ((<>))
-#else
-import Data.Monoid (mappend, mempty)
-#endif
-import Data.Streaming.Blaze (newBlazeRecv, reuseBufferStrategy)
+import Data.Streaming.ByteString.Builder (newByteStringBuilderRecv, reuseBufferStrategy)
 import Data.Version (showVersion)
 import Data.Word8 (_cr, _lf)
 import qualified Network.HTTP.Types as H
 import qualified Network.HTTP.Types.Header as H
 import Network.Wai
+import Network.Wai.Internal
+import qualified Paths_warp
+
 import Network.Wai.Handler.Warp.Buffer (toBuilderBuffer)
 import qualified Network.Wai.Handler.Warp.Date as D
 import Network.Wai.Handler.Warp.File
 import Network.Wai.Handler.Warp.Header
 import Network.Wai.Handler.Warp.IO (toBufIOWith)
+import Network.Wai.Handler.Warp.Imports
 import Network.Wai.Handler.Warp.ResponseHeader
 import Network.Wai.Handler.Warp.Settings
 import qualified Network.Wai.Handler.Warp.Timeout as T
 import Network.Wai.Handler.Warp.Types
-import Network.Wai.Internal
-import qualified Paths_warp
-
-#if !MIN_VERSION_base(4,5,0)
-(<>) :: Monoid m => m -> m -> m
-(<>) = mappend
-#endif
 
 -- $setup
 -- >>> :set -XOverloadedStrings
@@ -194,11 +171,11 @@ containsNewlines = S.any (\w -> w == _cr || w == _lf)
 
 {-# INLINE sanitizeHeaderValue #-}
 sanitizeHeaderValue :: ByteString -> ByteString
-sanitizeHeaderValue v = case S8.lines $ S.filter (/= _cr) v of
+sanitizeHeaderValue v = case C8.lines $ S.filter (/= _cr) v of
     []     -> ""
-    x : xs -> S8.intercalate "\r\n" (x : mapMaybe addSpaceIfMissing xs)
+    x : xs -> C8.intercalate "\r\n" (x : mapMaybe addSpaceIfMissing xs)
   where
-    addSpaceIfMissing line = case S8.uncons line of
+    addSpaceIfMissing line = case C8.uncons line of
         Nothing                           -> Nothing
         Just (first, _)
           | first == ' ' || first == '\t' -> Just line
@@ -247,7 +224,7 @@ sendRsp conn _ ver s hs (RspBuilder body needsChunked) = do
 
 sendRsp conn _ ver s hs (RspStream streamingBody needsChunked th) = do
     header <- composeHeaderBuilder ver s hs needsChunked
-    (recv, finish) <- newBlazeRecv $ reuseBufferStrategy
+    (recv, finish) <- newByteStringBuilderRecv $ reuseBufferStrategy
                     $ toBuilderBuffer (connWriteBuffer conn) (connBufferSize conn)
     let send builder = do
             popper <- recv builder

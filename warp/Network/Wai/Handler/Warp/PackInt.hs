@@ -2,21 +2,21 @@
 
 module Network.Wai.Handler.Warp.PackInt where
 
-import Control.Monad (when)
-import Data.ByteString.Internal (ByteString(..), unsafeCreate)
-import Data.Word8 (Word8)
+import Data.ByteString.Internal (unsafeCreate)
 import Foreign.Ptr (Ptr, plusPtr)
 import Foreign.Storable (poke)
 import qualified Network.HTTP.Types as H
 
+import Network.Wai.Handler.Warp.Imports
+
 -- $setup
--- >>> import Data.ByteString.Char8 as B
+-- >>> import Data.ByteString.Char8 as C8
 -- >>> import Test.QuickCheck (Large(..))
 
 -- |
 --
--- prop> packIntegral (abs n) == B.pack (show (abs n))
--- prop> \(Large n) -> let n' = fromIntegral (abs n :: Int) in packIntegral n' == B.pack (show n')
+-- prop> packIntegral (abs n) == C8.pack (show (abs n))
+-- prop> \(Large n) -> let n' = fromIntegral (abs n :: Int) in packIntegral n' == C8.pack (show n')
 
 packIntegral :: Integral a => a -> ByteString
 packIntegral 0 = "0"

@@ -11,35 +11,30 @@ module Network.Wai.Handler.Warp.HTTP2.Worker (
   , worker
   ) where
 
-#if __GLASGOW_HASKELL__ < 709
-import Control.Applicative
-import Data.Monoid (mempty)
-#endif
-import Control.Applicative ((<|>))
-import Data.Maybe (fromJust)
 import Control.Concurrent.STM
 import Control.Exception (SomeException(..), AsyncException(..))
 import qualified Control.Exception as E
-import Control.Monad (when)
 import Data.ByteString.Builder (byteString)
+import Data.IORef
+import Network.HPACK
+import Network.HPACK.Token
 import qualified Network.HTTP.Types as H
 import Network.HTTP2
 import Network.HTTP2.Priority
-import Network.HPACK
-import Network.HPACK.Token
 import Network.Wai
+import Network.Wai.Internal (Response(..), ResponseReceived(..), ResponseReceived(..))
+
 import Network.Wai.Handler.Warp.FileInfoCache
 import Network.Wai.Handler.Warp.HTTP2.EncodeFrame
 import Network.Wai.Handler.Warp.HTTP2.File
 import Network.Wai.Handler.Warp.HTTP2.Manager
-import Network.Wai.Handler.Warp.HTTP2.Types
 import Network.Wai.Handler.Warp.HTTP2.Request
-import Network.Wai.Handler.Warp.IORef
+import Network.Wai.Handler.Warp.HTTP2.Types
+import Network.Wai.Handler.Warp.Imports hiding (insert)
 import qualified Network.Wai.Handler.Warp.Response as R
 import qualified Network.Wai.Handler.Warp.Settings as S
 import qualified Network.Wai.Handler.Warp.Timeout as T
 import Network.Wai.Handler.Warp.Types
-import Network.Wai.Internal (Response(..), ResponseReceived(..), ResponseReceived(..))
 
 ----------------------------------------------------------------
 
@@ -224,8 +219,9 @@ response settings ctx@Context{outputQ} mgr ii reqvt tconf strm req rsp = case rs
             !out = Output strm rspn ii tell h2data rspnOrWait
         enqueueOutput outputQ out
         let push b = do
+              T.pause th
               atomically $ writeTBQueue tbq (SBuilder b)
-              T.tickle th
+              T.resume th
             flush  = atomically $ writeTBQueue tbq SFlush
         _ <- strmbdy push flush
         atomically $ writeTBQueue tbq SFinish
@@ -247,7 +243,8 @@ worker ctx@Context{inputQ,controlQ} set app responder tm = do
             setStreamInfo sinfo inp
             T.resume th
             T.tickle th
-            app req $ responder ii reqvt tcont strm req
+            let ii' = ii { threadHandle = th }
+            app req $ responder ii' reqvt tcont strm req
         cont1 <- case ex of
             Right ResponseReceived -> return True
             Left  e@(SomeException _)

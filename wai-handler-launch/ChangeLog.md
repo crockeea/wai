@@ -1,3 +1,11 @@
+## 3.0.2.4
+
+* Drop dependency on blaze-builder, requiring streaming-commons >= 0.2
+
+## 3.0.2.3
+
+* `process` package bump
+
 ## 3.0.2.2
 
 * Improvements to ping's javascript script. [#494](https://github.com/yesodweb/wai/pull/494)

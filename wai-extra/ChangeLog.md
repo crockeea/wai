@@ -1,3 +1,24 @@
+## 3.0.22.1
+
+* Drop dependency on blaze-builder, requiring streaming-commons >= 0.2
+
+## 3.0.22.0
+
+* Support for streaming-commons 0.2
+* Support for resourcet 1.2
+
+## 3.0.21.0
+
+* Export `Network.Wai.Parse.noLimitParseRequestBodyOptions` [#662](https://github.com/yesodweb/wai/pull/662).
+
+## 3.0.20.2
+
+* Revert previous change to `srequest`, which caused breakage
+
+## 3.0.20.1
+
+* Set `requestBodyLength` for `srequest` [#654](https://github.com/yesodweb/wai/pull/654)
+
 ## 3.0.20.0
 
 * runSessionWith (runSession variant that gives access to ClientState) [#629](https://github.com/yesodweb/wai/pull/629)

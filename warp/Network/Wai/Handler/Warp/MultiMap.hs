@@ -1,5 +1,3 @@
-{-# LANGUAGE CPP, BangPatterns #-}
-
 module Network.Wai.Handler.Warp.MultiMap (
     MMap
   , isEmpty
@@ -13,16 +11,17 @@ module Network.Wai.Handler.Warp.MultiMap (
   , merge
   ) where
 
-#if __GLASGOW_HASKELL__ < 709
-import Control.Applicative ((<$>))
-#endif
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as I
-import qualified Network.Wai.Handler.Warp.Some as S
+import qualified Data.List.NonEmpty as NE
+import Data.Semigroup
+import Prelude -- Silence redundant import warnings
+
+import Network.Wai.Handler.Warp.Imports hiding ((<>), union, empty, insert)
 
 ----------------------------------------------------------------
 
-type MMap v = IntMap (S.Some v)
+type MMap v = IntMap (NonEmpty v)
 
 ----------------------------------------------------------------
 
@@ -38,7 +37,7 @@ empty = I.empty
 
 -- | O(1)
 singleton :: Int -> v -> MMap v
-singleton k v = I.singleton k (S.singleton v)
+singleton k v = I.singleton k (v :| [])
 
 ----------------------------------------------------------------
 
@@ -46,19 +45,19 @@ singleton k v = I.singleton k (S.singleton v)
 search :: Int -> MMap v -> Maybe v
 search k m = case I.lookup k m of
     Nothing -> Nothing
-    Just s  -> Just $! S.top s
+    Just s  -> Just $! NE.head s
 
 -- | O(log n)
 searchWith :: Int -> (v -> Bool) -> MMap v -> Maybe v
 searchWith k f m = case I.lookup k m of
-    Nothing -> Nothing
-    Just s  -> S.lookupWith f s
+    Nothing  -> Nothing
+    Just nxs -> find f $ NE.toList nxs
 
 ----------------------------------------------------------------
 
 -- | O(log n)
 insert :: Int -> v -> MMap v -> MMap v
-insert k v m = I.insertWith S.union k (S.singleton v) m
+insert k v m = I.insertWith (<>) k (v :| []) m
 
 ----------------------------------------------------------------
 
@@ -66,7 +65,7 @@ insert k v m = I.insertWith S.union k (S.singleton v) m
 toList :: MMap v -> [v]
 toList m = concatMap f $ I.toAscList m
   where
-    f (_,s) = S.toList s
+    f (_,s) = NE.toList s
 
 ----------------------------------------------------------------
 
@@ -78,7 +77,7 @@ pruneWith m action = I.fromAscList <$> go (I.toDescList m) []
   where
     go []          acc = return acc
     go ((k,s):kss) acc = do
-        mt <- S.prune action s
+        mt <- prune action s
         case mt of
             Nothing -> go kss acc
             Just t  -> go kss ((k,t) : acc)
@@ -87,4 +86,15 @@ pruneWith m action = I.fromAscList <$> go (I.toDescList m) []
 
 -- O(n + m) where N is the size of the second argument
 merge :: MMap v -> MMap v -> MMap v
-merge m1 m2 = I.unionWith S.union m1 m2
+merge m1 m2 = I.unionWith (<>) m1 m2
+
+----------------------------------------------------------------
+
+prune :: (a -> IO Bool) -> NonEmpty a -> IO (Maybe (NonEmpty a))
+prune act nxs = NE.nonEmpty <$> go (NE.toList nxs)
+  where
+    go []     = return []
+    go (x:xs) = do
+        keep <- act x
+        rs <- go xs
+        return $ if keep then x:rs else rs

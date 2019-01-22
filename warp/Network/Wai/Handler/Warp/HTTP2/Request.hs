@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, CPP #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE BangPatterns #-}
 
 module Network.Wai.Handler.Warp.HTTP2.Request (
@@ -9,26 +9,25 @@ module Network.Wai.Handler.Warp.HTTP2.Request (
   , modifyHTTP2Data
   ) where
 
-import Control.Applicative ((<|>))
 import Control.Arrow (first)
-import Data.ByteString (ByteString)
-import qualified Data.ByteString.Char8 as B8
-import Data.Maybe (fromJust)
+import qualified Data.ByteString.Char8 as C8
+import Data.IORef
 import qualified Data.Vault.Lazy as Vault
 import Network.HPACK
 import Network.HPACK.Token
 import qualified Network.HTTP.Types as H
 import Network.Socket (SockAddr)
 import Network.Wai
+import Network.Wai.Internal (Request(..))
+import System.IO.Unsafe (unsafePerformIO)
+
 import Network.Wai.Handler.Warp.HTTP2.Types
 import Network.Wai.Handler.Warp.HashMap (hashByteString)
-import Network.Wai.Handler.Warp.IORef
+import Network.Wai.Handler.Warp.Imports
 import Network.Wai.Handler.Warp.Request (pauseTimeoutKey, getFileInfoKey)
 import qualified Network.Wai.Handler.Warp.Settings as S (Settings, settingsNoParsePath)
 import qualified Network.Wai.Handler.Warp.Timeout as Timeout
 import Network.Wai.Handler.Warp.Types
-import Network.Wai.Internal (Request(..))
-import System.IO.Unsafe (unsafePerformIO)
 
 type MkReq = (TokenHeaderList,ValueTable) -> (Maybe Int,IO ByteString) -> IO (Request,InternalInfo)
 
@@ -76,12 +75,12 @@ mkRequest' ii1 settings addr ref (reqths,reqvt) (bodylen,body) = return (req,ii)
     !mUserAgent = getHeaderValue tokenUserAgent reqvt
     -- CONNECT request will have ":path" omitted, use ":authority" as unparsed
     -- path instead so that it will have consistent behavior compare to HTTP 1.0
-    (unparsedPath,query) = B8.break (=='?') $ fromJust (mPath <|> mAuth)
+    (unparsedPath,query) = C8.break (=='?') $ fromJust (mPath <|> mAuth)
     !path = H.extractPath unparsedPath
     !rawPath = if S.settingsNoParsePath settings then unparsedPath else path
     !h = hashByteString rawPath
     !ii = toInternalInfo ii1 h
-    !th = threadHandle ii
+    !th = threadHandle ii -- th must be overwritten with worker's one.
     !vaultValue = Vault.insert pauseTimeoutKey (Timeout.pause th)
                 $ Vault.insert getFileInfoKey (getFileInfo ii)
                 $ Vault.insert getHTTP2DataKey (readIORef ref)
@@ -91,7 +90,7 @@ mkRequest' ii1 settings addr ref (reqths,reqvt) (bodylen,body) = return (req,ii)
 
 getHTTP2DataKey :: Vault.Key (IO (Maybe HTTP2Data))
 getHTTP2DataKey = unsafePerformIO Vault.newKey
-{-# NOINLINE getHTTP2Data #-}
+{-# NOINLINE getHTTP2DataKey #-}
 
 -- | Getting 'HTTP2Data' through vault of the request.
 --   Warp uses this to receive 'HTTP2Data' from 'Middleware'.
@@ -104,7 +103,7 @@ getHTTP2Data req = case Vault.lookup getHTTP2DataKey (vault req) of
 
 setHTTP2DataKey :: Vault.Key (Maybe HTTP2Data -> IO ())
 setHTTP2DataKey = unsafePerformIO Vault.newKey
-{-# NOINLINE setHTTP2Data #-}
+{-# NOINLINE setHTTP2DataKey #-}
 
 -- | Setting 'HTTP2Data' through vault of the request.
 --   'Application' or 'Middleware' should use this.
@@ -117,7 +116,7 @@ setHTTP2Data req mh2d = case Vault.lookup setHTTP2DataKey (vault req) of
 
 modifyHTTP2DataKey :: Vault.Key ((Maybe HTTP2Data -> Maybe HTTP2Data) -> IO ())
 modifyHTTP2DataKey = unsafePerformIO Vault.newKey
-{-# NOINLINE modifyHTTP2Data #-}
+{-# NOINLINE modifyHTTP2DataKey #-}
 
 -- | Modifying 'HTTP2Data' through vault of the request.
 --   'Application' or 'Middleware' should use this.
