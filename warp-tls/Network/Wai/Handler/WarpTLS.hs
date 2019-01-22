@@ -372,11 +372,8 @@ httpOverTls :: TLS.TLSParams params => TLSSettings -> Socket -> S.ByteString -> 
 httpOverTls TLSSettings{..} s bs0 params = do
     recvN <- makePlainReceiveN s bs0
     ctx <- TLS.contextNew (backend recvN) params
-    TLS.checkMasterSecret 1 ctx
     TLS.contextHookSetLogging ctx tlsLogging
-    TLS.checkMasterSecret 2 ctx
     TLS.handshake ctx
-    TLS.checkMasterSecret 3 ctx
     writeBuf <- allocateBuffer bufferSize
     -- Creating a cache for leftover input data.
     ref <- I.newIORef ""
