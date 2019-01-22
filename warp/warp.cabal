@@ -1,5 +1,5 @@
 Name:                warp
-Version:             3.2.20
+Version:             3.2.26
 Synopsis:            A fast, light-weight web server for WAI applications.
 License:             MIT
 License-file:        LICENSE
@@ -55,7 +55,6 @@ Library
                    , word8
                    , hashable
                    , http-date
-                   , x509
   if impl(ghc < 8)
       Build-Depends: semigroups
   if flag(network-bytestring)

@@ -1,3 +1,31 @@
+# Changelog for wai-extra
+
+## 3.0.25
+
+* Supporting `network` version 3.0.
+
+## 3.0.24.3
+
+* Drop unnecessary `lifted-base` dependency
+* Drop unnecessary `stringsearch` dependency [#714](https://github.com/yesodweb/wai/pull/714)
+
+## 3.0.24.2
+
+* Consider quoted multipart form boundary markers [#700](https://github.com/yesodweb/wai/pull/700).
+* Don't raise exceptions in `formatAsJSON` [#709](https://github.com/yesodweb/wai/pull/709)
+
+## 3.0.24.1
+
+* Fix a "file not found" exception in wai-extra [#705](https://github.com/yesodweb/wai/pull/706)
+
+## 3.0.24.0
+
+* Add timeout middleware [#702](https://github.com/yesodweb/wai/pull/702).
+
+## 3.0.23.0
+
+* Add rewriteRoot middleware [#697](https://github.com/yesodweb/wai/pull/697).
+
 ## 3.0.22.1
 
 * Drop dependency on blaze-builder, requiring streaming-commons >= 0.2

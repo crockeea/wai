@@ -48,7 +48,6 @@ module Network.Wai.Parse
 #endif
     ) where
 
-import qualified Data.ByteString.Search as Search
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Char8 as S8
@@ -59,10 +58,12 @@ import Data.List (sortBy)
 import Data.Function (on, fix)
 import System.Directory (removeFile, getTemporaryDirectory)
 import System.IO (hClose, openBinaryTempFile)
+import System.IO.Error (isDoesNotExistError)
 import Network.Wai
 import qualified Network.HTTP.Types as H
 import Control.Applicative ((<$>))
-import Control.Monad (when, unless)
+import Control.Exception (catchJust)
+import Control.Monad (when, unless, guard)
 import Control.Monad.Trans.Resource (allocate, release, register, InternalState, runInternalState)
 import Data.IORef
 import Network.HTTP.Types (hContentType)
@@ -128,7 +129,7 @@ tempFileBackEndOpts :: IO FilePath -- ^ get temporary directory
                     -> IO FilePath
 tempFileBackEndOpts getTmpDir pattrn internalState _ _ popper = do
     (key, (fp, h)) <- flip runInternalState internalState $ allocate it (hClose . snd)
-    _ <- runInternalState (register $ removeFile fp) internalState
+    _ <- runInternalState (register $ removeFileQuiet fp) internalState
     fix $ \loop -> do
         bs <- popper
         unless (S.null bs) $ do
@@ -140,6 +141,9 @@ tempFileBackEndOpts getTmpDir pattrn internalState _ _ popper = do
         it = do
             tempDir <- getTmpDir
             openBinaryTempFile tempDir pattrn
+        removeFileQuiet fp = catchJust (guard . isDoesNotExistError)
+                                       (removeFile fp)
+                                       (const $ return ())
 
 -- | A data structure that describes the behavior of
 -- the parseRequestBodyEx function.
@@ -331,6 +335,9 @@ parseContentType a = do
     semicolon = 59
     equals = 61
     space = 32
+    dq s = if S.length s > 2 && S.head s == 34 && S.last s == 34 -- quote
+                then S.tail $ S.init s
+                else s
     goAttrs front bs
         | S.null bs = front []
         | otherwise =
@@ -339,7 +346,7 @@ parseContentType a = do
     goAttr bs =
         let (k, v') = S.break (== equals) bs
             v = S.drop 1 v'
-         in (strip k, strip v)
+         in (strip k, dq $ strip v)
     strip = S.dropWhile (== space) . fst . S.breakEnd (/= space)
 
 -- | Parse the body of an HTTP request.
@@ -569,7 +576,7 @@ data Bound = FoundBound S.ByteString S.ByteString
     deriving (Eq, Show)
 
 findBound :: S.ByteString -> S.ByteString -> Bound
-findBound b bs = handleBreak $ Search.breakOn b bs
+findBound b bs = handleBreak $ S.breakSubstring b bs
   where
     handleBreak (h, t)
         | S.null t = go [lowBound..S.length bs - 1]

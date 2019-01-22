@@ -236,7 +236,12 @@ acceptConnection set getConnMaker app counter ii0 = do
     -- First mask all exceptions in acceptLoop. This is necessary to
     -- ensure that no async exception is throw between the call to
     -- acceptNewConnection and the registering of connClose.
+    --
+    -- acceptLoop can be broken by closing the listing socket.
     void $ mask_ acceptLoop
+    -- In some cases, we want to stop Warp here without graceful shutdown.
+    -- So, async exceptions are allowed here.
+    -- That's why `finally` is not used.
     gracefulShutdown set counter
   where
     acceptLoop = do
@@ -466,8 +471,9 @@ serveConnection conn ii1 origAddr transport settings app = do
             -- https://github.com/yesodweb/wai/issues/618
             Just NoKeepAliveRequest -> return ()
             Nothing -> do
-              sendErrorResponse addr istatus e
+              sendErrorResponse (dummyreq addr) istatus e
               throwIO e
+
   where
     getProxyProtocolAddr src =
         case settingsProxyProtocol settings of
@@ -515,12 +521,11 @@ serveConnection conn ii1 origAddr transport settings app = do
         | Just ConnectionClosedByPeer <- fromException se = False
         | otherwise                                       = True
 
-    sendErrorResponse addr istatus e = do
+    sendErrorResponse req istatus e = do
         status <- readIORef istatus
         when (shouldSendErrorResponse e && status) $ do
            let ii = toInternalInfo ii1 0 -- dummy
-               dreq = dummyreq addr
-           void $ sendResponse settings conn ii dreq defaultIndexRequestHeader (return S.empty) (errorResponse e)
+           void $ sendResponse settings conn ii req defaultIndexRequestHeader (return S.empty) (errorResponse e)
 
     dummyreq addr = defaultRequest { remoteHost = addr }
 
@@ -532,7 +537,7 @@ serveConnection conn ii1 origAddr transport settings app = do
         keepAlive <- processRequest istatus src req mremainingRef idxhdr nextBodyFlush ii
             `E.catch` \e -> do
                 -- Call the user-supplied exception handlers, passing the request.
-                sendErrorResponse addr istatus e
+                sendErrorResponse req istatus e
                 settingsOnException settings (Just req) e
                 -- Don't throw the error again to prevent calling settingsOnException twice.
                 return False
@@ -835,7 +840,13 @@ setSocketCloseOnExec :: Socket -> IO ()
 #if WINDOWS
 setSocketCloseOnExec _ = return ()
 #else
-setSocketCloseOnExec socket = F.setFileCloseOnExec $ fromIntegral $ fdSocket socket
+setSocketCloseOnExec socket = do
+#if MIN_VERSION_network(3,0,0)
+    fd <- fdSocket socket
+#else
+    let fd = fdSocket socket
+#endif
+    F.setFileCloseOnExec $ fromIntegral fd
 #endif
 
 gracefulShutdown :: Settings -> Counter -> IO ()

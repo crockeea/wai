@@ -1,9 +1,39 @@
+## 3.2.26
+
+* Support network package version 3
+
+## 3.2.25
+
+* Removing Connection: and Transfer-Encoding: from HTTP/2
+  response header
+  [#707](https://github.com/yesodweb/wai/pull/707)
+
+## 3.2.24
+
+* Fix HTTP2 unwanted GoAways on late WindowUpdate frames.
+  [#711](https://github.com/yesodweb/wai/pull/711)
+
+## 3.2.23
+
+* Log real requsts when an app throws an error.
+  [#698](https://github.com/yesodweb/wai/pull/698)
+
+## 3.2.22
+
+* Fixing large request body in HTTP/2.
+
+## 3.2.21
+
+* Fixing HTTP/2's timeout handler in request's vault.
+
 ## 3.2.20
-* Fixing "Thread killed by timeout reaper when sending large HTTP/2 response"
+
+* Fixing large request body in HTTP/2
   [#593](https://github.com/yesodweb/wai/issues/593)
 
 ## 3.2.19
-* Fixing 0-length body in HTTP/2
+
+* Fixing 0-byte request body in HTTP/2
   [#597](https://github.com/yesodweb/wai/issues/597)
   [#679](https://github.com/yesodweb/wai/issues/679)
 
