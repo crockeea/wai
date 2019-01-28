@@ -212,6 +212,7 @@ Test-Suite spec
                    , word8
                    , hashable
                    , http-date
+                   , x509
     -- Build-Tool-Depends: hspec-discover:hspec-discover
   if impl(ghc < 8)
       Build-Depends: semigroups
@@ -245,6 +246,7 @@ Benchmark parser
                   , network
                   , network
                   , unix-compat
+                  , x509
   if impl(ghc < 8)
       Build-Depends: semigroups
 
