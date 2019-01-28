@@ -17,6 +17,7 @@ import qualified Data.ByteString as S
 import Data.Char (chr)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef')
 import Data.Streaming.Network (bindPortTCP)
+import Data.X509 (CertificateChain)
 import Foreign.C.Error (Errno(..), eCONNABORTED)
 import GHC.IO.Exception (IOException(..))
 import Network.Socket (Socket, close, accept, withSocketsDo, SockAddr(SockAddrInet, SockAddrInet6), setSocketOption, SocketOption(..))
@@ -188,6 +189,30 @@ runSettingsConnectionMakerSecure set getConnMaker app = do
                    T.stopManager
                    f
 
+runSettingsConnectionMakerSecureAuth :: Settings -> IO (IO (Connection, Transport), SockAddr) -> (CertificateChain -> Application) -> IO ()
+runSettingsConnectionMakerSecureAuth set getConnMaker app = do
+    settingsBeforeMainLoop set
+    counter <- newCounter
+    withII0 $ acceptConnectionAuth set getConnMaker app counter
+  where
+    withII0 action =
+        withTimeoutManager $ \tm ->
+        D.withDateCache $ \dc ->
+        F.withFdCache fdCacheDurationInSeconds $ \fdc ->
+        I.withFileInfoCache fdFileInfoDurationInSeconds $ \fic -> do
+            let ii0 = InternalInfo0 tm dc fdc fic
+            action ii0
+
+    !fdCacheDurationInSeconds = settingsFdCacheDuration set * 1000000
+    !fdFileInfoDurationInSeconds = settingsFileInfoCacheDuration set * 1000000
+    !timeoutInSeconds = settingsTimeout set * 1000000
+    withTimeoutManager f = case settingsManager set of
+        Just tm -> f tm
+        Nothing -> bracket
+                   (T.initialize timeoutInSeconds)
+                   T.stopManager
+                   f
+
 -- Note that there is a thorough discussion of the exception safety of the
 -- following code at: https://github.com/yesodweb/wai/issues/146
 --
@@ -235,6 +260,50 @@ acceptConnection set getConnMaker app counter ii0 = do
             Nothing             -> return ()
             Just (mkConn, addr) -> do
                 fork set mkConn addr app counter ii0
+                acceptLoop
+
+    acceptNewConnection = do
+        ex <- try getConnMaker
+        case ex of
+            Right x -> return $ Just x
+            Left e -> do
+                let eConnAborted = getErrno eCONNABORTED
+                    getErrno (Errno cInt) = cInt
+                if ioe_errno e == Just eConnAborted
+                    then acceptNewConnection
+                    else do
+                        settingsOnException set Nothing $ toException e
+                        return Nothing
+
+acceptConnectionAuth :: Settings
+                 -> IO (IO (Connection, Transport), SockAddr)
+                 -> (CertificateChain -> Application)
+                 -> Counter
+                 -> InternalInfo0
+                 -> IO ()
+acceptConnectionAuth set getConnMaker app counter ii0 = do
+    -- First mask all exceptions in acceptLoop. This is necessary to
+    -- ensure that no async exception is throw between the call to
+    -- acceptNewConnection and the registering of connClose.
+    void $ mask_ acceptLoop
+    gracefulShutdown set counter
+  where
+    acceptLoop = do
+        -- Allow async exceptions before receiving the next connection maker.
+        allowInterrupt
+
+        -- acceptNewConnection will try to receive the next incoming
+        -- request. It returns a /connection maker/, not a connection,
+        -- since in some circumstances creating a working connection
+        -- from a raw socket may be an expensive operation, and this
+        -- expensive work should not be performed in the main event
+        -- loop. An example of something expensive would be TLS
+        -- negotiation.
+        mx <- acceptNewConnection
+        case mx of
+            Nothing             -> return ()
+            Just (mkConn, addr) -> do
+                forkAuth set mkConn addr app counter ii0
                 acceptLoop
 
     acceptNewConnection = do
@@ -302,6 +371,64 @@ fork set mkConn addr app counter ii0 = settingsFork set $ \unmask ->
            -- Actually serve this connection.  bracket with closeConn
            -- above ensures the connection is closed.
            when goingon $ serveConnection conn ii1 addr transport set app
+      where
+        register = T.registerKillThread (timeoutManager0 ii0)
+                                        (closeConn ref conn)
+        cancel   = T.cancel
+
+    onOpen adr    = increase counter >> settingsOnOpen  set adr
+    onClose adr _ = decrease counter >> settingsOnClose set adr
+
+forkAuth :: Settings
+     -> IO (Connection, Transport)
+     -> SockAddr
+     -> (CertificateChain -> Application)
+     -> Counter
+     -> InternalInfo0
+     -> IO ()
+forkAuth set mkConn addr app counter ii0 = settingsFork set $ \unmask ->
+    -- Call the user-supplied on exception code if any
+    -- exceptions are thrown.
+    handle (settingsOnException set Nothing) .
+    -- Allocate a new IORef indicating whether the connection has been
+    -- closed, to avoid double-freeing a connection
+    withClosedRef $ \ref ->
+        -- Run the connection maker to get a new connection, and ensure
+        -- that the connection is closed. If the mkConn call throws an
+        -- exception, we will leak the connection. If the mkConn call is
+        -- vulnerable to attacks (e.g., Slowloris), we do nothing to
+        -- protect the server. It is therefore vital that mkConn is well
+        -- vetted.
+        --
+        -- We grab the connection before registering timeouts since the
+        -- timeouts will be useless during connection creation, due to the
+        -- fact that async exceptions are still masked.
+        bracket mkConn (cleanUp ref) (serve unmask ref)
+  where
+    withClosedRef inner = newIORef False >>= inner
+
+    closeConn ref conn = do
+        isClosed <- atomicModifyIORef' ref $ \x -> (True, x)
+        unless isClosed $ connClose conn
+
+    cleanUp ref (conn, _) = closeConn ref conn `finally` connFree conn
+
+    -- We need to register a timeout handler for this thread, and
+    -- cancel that handler as soon as we exit. We additionally close
+    -- the connection immediately in case the child thread catches the
+    -- async exception or performs some long-running cleanup action.
+    serve unmask ref (conn, transport) = bracket register cancel $ \th -> do
+        let ii1 = toInternalInfo1 ii0 th
+        -- We now have fully registered a connection close handler in
+        -- the case of all exceptions, so it is safe to one again
+        -- allow async exceptions.
+        unmask .
+            -- Call the user-supplied code for connection open and
+            -- close events
+           bracket (onOpen addr) (onClose addr) $ \goingon ->
+           -- Actually serve this connection.  bracket with closeConn
+           -- above ensures the connection is closed.
+           when goingon $ serveConnectionAuth conn ii1 addr transport set app
       where
         register = T.registerKillThread (timeoutManager0 ii0)
                                         (closeConn ref conn)
@@ -483,6 +610,174 @@ serveConnection conn ii1 origAddr transport settings app = do
                                 return False
                         Nothing -> tryKeepAlive
 
+serveConnectionAuth :: Connection
+                -> InternalInfo1
+                -> SockAddr
+                -> Transport
+                -> Settings
+                -> (CertificateChain -> Application)
+                -> IO ()
+serveConnectionAuth conn ii1 origAddr transport settings app = do
+    -- fixme: Upgrading to HTTP/2 should be supported.
+    (h2,bs,cc) <- if isHTTP2 transport then
+                     return (True, "", error "ERROR 1")
+                   else do
+                     (cc,bs0) <- connRecvAuth conn
+                     if S.length bs0 >= 4 && "PRI " `S.isPrefixOf` bs0 then
+                         return (True, bs0, cc)
+                       else
+                         return (False, bs0, cc)
+    istatus <- newIORef False
+    if settingsHTTP2Enabled settings && h2 then do
+        rawRecvN <- makeReceiveN bs (connRecv conn) (connRecvBuf conn)
+        let recvN = wrappedRecvN th istatus (settingsSlowlorisSize settings) rawRecvN
+        -- fixme: origAddr
+        http2 conn ii1 origAddr transport settings recvN (app cc)
+      else do
+        src <- mkSource (wrappedRecvAuth cc conn th istatus (settingsSlowlorisSize settings))
+        writeIORef istatus True
+        leftoverSource src bs
+        addr <- getProxyProtocolAddr src
+        http1 True addr istatus src cc `E.catch` \e -> do
+            sendErrorResponse addr istatus e
+            throwIO (e :: SomeException)
+  where
+    getProxyProtocolAddr src =
+        case settingsProxyProtocol settings of
+            ProxyProtocolNone ->
+                return origAddr
+            ProxyProtocolRequired -> do
+                seg <- readSource src
+                parseProxyProtocolHeader src seg
+            ProxyProtocolOptional -> do
+                seg <- readSource src
+                if S.isPrefixOf "PROXY " seg
+                    then parseProxyProtocolHeader src seg
+                    else do leftoverSource src seg
+                            return origAddr
+
+    parseProxyProtocolHeader src seg = do
+        let (header,seg') = S.break (== 0x0d) seg -- 0x0d == CR
+            maybeAddr = case S.split 0x20 header of -- 0x20 == space
+                ["PROXY","TCP4",clientAddr,_,clientPort,_] ->
+                    case [x | (x, t) <- reads (decodeAscii clientAddr), null t] of
+                        [a] -> Just (SockAddrInet (readInt clientPort)
+                                                       (toHostAddress a))
+                        _ -> Nothing
+                ["PROXY","TCP6",clientAddr,_,clientPort,_] ->
+                    case [x | (x, t) <- reads (decodeAscii clientAddr), null t] of
+                        [a] -> Just (SockAddrInet6 (readInt clientPort)
+                                                        0
+                                                        (toHostAddress6 a)
+                                                        0)
+                        _ -> Nothing
+                ("PROXY":"UNKNOWN":_) ->
+                    Just origAddr
+                _ ->
+                    Nothing
+        case maybeAddr of
+            Nothing -> throwIO (BadProxyHeader (decodeAscii header))
+            Just a -> do leftoverSource src (S.drop 2 seg') -- drop CRLF
+                         return a
+
+    decodeAscii = map (chr . fromEnum) . S.unpack
+
+    th = threadHandle1 ii1
+
+    shouldSendErrorResponse se
+        | Just ConnectionClosedByPeer <- fromException se = False
+        | otherwise                                       = True
+
+    sendErrorResponse addr istatus e = do
+        status <- readIORef istatus
+        when (shouldSendErrorResponse e && status) $ do
+           let ii = toInternalInfo ii1 0 -- dummy
+               dreq = dummyreq addr
+           void $ sendResponse settings conn ii dreq defaultIndexRequestHeader (return S.empty) (errorResponse e)
+
+    dummyreq addr = defaultRequest { remoteHost = addr }
+
+    errorResponse e = settingsOnExceptionResponse settings e
+
+    http1 firstRequest addr istatus src cc = do
+        (req', mremainingRef, idxhdr, nextBodyFlush, ii) <- recvRequest firstRequest settings conn ii1 addr src
+        let req = req' { isSecure = isTransportSecure transport }
+        keepAlive <- processRequest istatus src req mremainingRef idxhdr nextBodyFlush ii cc
+            `E.catch` \e -> do
+                -- Call the user-supplied exception handlers, passing the request.
+                sendErrorResponse addr istatus e
+                settingsOnException settings (Just req) e
+                -- Don't throw the error again to prevent calling settingsOnException twice.
+                return False
+
+        -- When doing a keep-alive connection, the other side may just
+        -- close the connection. We don't want to treat that as an
+        -- exceptional situation, so we pass in False to http1 (which
+        -- in turn passes in False to recvRequest), indicating that
+        -- this is not the first request. If, when trying to read the
+        -- request headers, no data is available, recvRequest will
+        -- throw a NoKeepAliveRequest exception, which we catch here
+        -- and ignore. See: https://github.com/yesodweb/wai/issues/618
+        when keepAlive $ http1 False addr istatus src cc `E.catch` \NoKeepAliveRequest -> return ()
+
+    processRequest istatus src req mremainingRef idxhdr nextBodyFlush ii cc = do
+        -- Let the application run for as long as it wants
+        T.pause th
+
+        -- In the event that some scarce resource was acquired during
+        -- creating the request, we need to make sure that we don't get
+        -- an async exception before calling the ResponseSource.
+        keepAliveRef <- newIORef $ error "keepAliveRef not filled"
+        _ <- app cc req $ \res -> do
+            T.resume th
+            -- FIXME consider forcing evaluation of the res here to
+            -- send more meaningful error messages to the user.
+            -- However, it may affect performance.
+            writeIORef istatus False
+            keepAlive <- sendResponse settings conn ii req idxhdr (readSource src) res
+            writeIORef keepAliveRef keepAlive
+            return ResponseReceived
+        keepAlive <- readIORef keepAliveRef
+
+        -- We just send a Response and it takes a time to
+        -- receive a Request again. If we immediately call recv,
+        -- it is likely to fail and the IO manager works.
+        -- It is very costly. So, we yield to another Haskell
+        -- thread hoping that the next Request will arrive
+        -- when this Haskell thread will be re-scheduled.
+        -- This improves performance at least when
+        -- the number of cores is small.
+        Conc.yield
+
+        if not keepAlive then
+            return False
+          else
+            -- If there is an unknown or large amount of data to still be read
+            -- from the request body, simple drop this connection instead of
+            -- reading it all in to satisfy a keep-alive request.
+            case settingsMaximumBodyFlush settings of
+                Nothing -> do
+                    flushEntireBody nextBodyFlush
+                    T.resume th
+                    return True
+                Just maxToRead -> do
+                    let tryKeepAlive = do
+                            -- flush the rest of the request body
+                            isComplete <- flushBody nextBodyFlush maxToRead
+                            if isComplete then do
+                                T.resume th
+                                return True
+                              else
+                                return False
+                    case mremainingRef of
+                        Just ref -> do
+                            remaining <- readIORef ref
+                            if remaining <= maxToRead then
+                                tryKeepAlive
+                              else
+                                return False
+                        Nothing -> tryKeepAlive
+
 flushEntireBody :: IO ByteString -> IO ()
 flushEntireBody src =
     loop
@@ -509,6 +804,15 @@ flushBody src =
 wrappedRecv :: Connection -> T.Handle -> IORef Bool -> Int -> IO ByteString
 wrappedRecv Connection { connRecv = recv } th istatus slowlorisSize = do
     bs <- recv
+    unless (S.null bs) $ do
+        writeIORef istatus True
+        when (S.length bs >= slowlorisSize) $ T.tickle th
+    return bs
+
+wrappedRecvAuth :: CertificateChain -> Connection -> T.Handle -> IORef Bool -> Int -> IO ByteString
+wrappedRecvAuth cc Connection { connRecvAuth = recv } th istatus slowlorisSize = do
+    (_,bs) <- recv
+    --when (cc /= cc') $ error $ "CERTIFICATE CHAINS DO NOT MATCH:\n" ++ show cc ++ "\n\n" ++ show cc' ++ "\n\n" ++ show bs
     unless (S.null bs) $ do
         writeIORef istatus True
         when (S.length bs >= slowlorisSize) $ T.tickle th

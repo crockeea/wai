@@ -8,6 +8,7 @@ import Control.Exception
 import qualified Data.ByteString as S
 import Data.IORef (IORef, readIORef, writeIORef, newIORef)
 import Data.Typeable (Typeable)
+import Data.X509 (CertificateChain(..))
 import Foreign.Ptr (Ptr)
 import System.Posix.Types (Fd)
 
@@ -101,6 +102,7 @@ data Connection = Connection {
     , connFree        :: IO ()
     -- | The connection receiving function. This returns "" for EOF.
     , connRecv        :: Recv
+    , connRecvAuth    :: IO (CertificateChain, ByteString)
     -- | The connection receiving function. This tries to fill the buffer.
     --   This returns when the buffer is filled or reaches EOF.
     , connRecvBuf     :: RecvBuf
@@ -150,6 +152,10 @@ toInternalInfo (InternalInfo1 a b c d e) h = InternalInfo a b c (d h) (e h)
 
 ----------------------------------------------------------------
 
+data AuthSource = ASource !(IORef (CertificateChain, ByteString)) !(IO (CertificateChain, ByteString))
+
+
+
 -- | Type for input streaming.
 data Source = Source !(IORef ByteString) !(IO ByteString)
 
@@ -157,6 +163,20 @@ mkSource :: IO ByteString -> IO Source
 mkSource func = do
     ref <- newIORef S.empty
     return $! Source ref func
+
+mkAuthSource :: IO (CertificateChain, ByteString) -> IO AuthSource
+mkAuthSource func = do
+  ref <- newIORef $ (CertificateChain [], S.empty)
+  return $! ASource ref func
+
+readSourceAuth :: AuthSource -> IO (CertificateChain, ByteString)
+readSourceAuth (ASource ref func) = do
+    (cc,bs) <- readIORef ref
+    if S.null bs
+        then func
+        else do
+            writeIORef ref (CertificateChain [], S.empty)
+            return (cc,bs)
 
 readSource :: Source -> IO ByteString
 readSource (Source ref func) = do
@@ -173,6 +193,9 @@ readSource' (Source _ func) = func
 
 leftoverSource :: Source -> ByteString -> IO ()
 leftoverSource (Source ref _) bs = writeIORef ref bs
+
+leftoverSourceAuth :: AuthSource -> (CertificateChain, ByteString) -> IO ()
+leftoverSourceAuth (ASource ref _) bs = writeIORef ref bs
 
 readLeftoverSource :: Source -> IO ByteString
 readLeftoverSource (Source ref _) = readIORef ref

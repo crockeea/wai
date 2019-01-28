@@ -74,7 +74,9 @@ parseRequestLine requestLine@(PS fptr off len) = withForeignPtr fptr $ \ptr -> d
     let httpptr = httpptr0 `plusPtr` 1
         lim2 = fromIntegral (httpptr0 `minusPtr` pathptr)
 
-    checkHTTP httpptr
+    -- EAC: Commenting out checkHTTP (and its definition below) 
+    -- mysteriously works around GHC bug #16166
+    --checkHTTP httpptr
     !hv <- httpVersion httpptr
     queryptr <- memchr pathptr 63 lim2 -- '?'
 
@@ -93,13 +95,13 @@ parseRequestLine requestLine@(PS fptr off len) = withForeignPtr fptr $ \ptr -> d
     check p n w = do
         w0 <- peek $ p `plusPtr` n
         when (w0 /= w) $ throwIO NonHttp
-    checkHTTP httpptr = do
-        check httpptr 0 72 -- 'H'
-        check httpptr 1 84 -- 'T'
-        check httpptr 2 84 -- 'T'
-        check httpptr 3 80 -- 'P'
-        check httpptr 4 47 -- '/'
-        check httpptr 6 46 -- '.'
+    -- checkHTTP httpptr = do
+    --     check httpptr 0 72 -- 'H'
+    --     check httpptr 1 84 -- 'T'
+    --     check httpptr 2 84 -- 'T'
+    --     check httpptr 3 80 -- 'P'
+    --     check httpptr 4 47 -- '/'
+    --     check httpptr 6 46 -- '.'
     httpVersion httpptr = do
         major <- peek (httpptr `plusPtr` 5) :: IO Word8
         minor <- peek (httpptr `plusPtr` 7) :: IO Word8

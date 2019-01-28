@@ -8,6 +8,7 @@ module Network.Wai.Handler.Warp.Internal (
   , runSettingsConnection
   , runSettingsConnectionMaker
   , runSettingsConnectionMakerSecure
+  , runSettingsConnectionMakerSecureAuth
   , Transport (..)
     -- * Connection
   , Connection (..)
