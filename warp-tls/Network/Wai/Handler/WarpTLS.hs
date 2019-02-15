@@ -329,7 +329,7 @@ runTLSSocket' tlsset@TLSSettings{..} set credential mgr sock app = do
         TLS.sharedCredentials    = TLS.Credentials [credential]
       , TLS.sharedSessionManager = mgr
       }
-    supported = tlsServerSupported
+    supported = tlsServerSupported{TLS.supportedCiphers=tlsCiphers}
     {-def { -- TLS.Supported
         TLS.supportedVersions       = tlsAllowedVersions
       , TLS.supportedCiphers        = tlsCiphers
@@ -365,7 +365,7 @@ runTLSSocketAuth' tlsset@TLSSettings{..} set credential mgr sock app =
         TLS.sharedCredentials    = TLS.Credentials [credential]
       , TLS.sharedSessionManager = mgr
       }
-    supported = tlsServerSupported
+    supported = tlsServerSupported{TLS.supportedCiphers=tlsCiphers}
 
 alpn :: [S.ByteString] -> IO S.ByteString
 alpn xs
