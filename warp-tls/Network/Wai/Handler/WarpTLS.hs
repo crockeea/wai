@@ -21,7 +21,6 @@ module Network.Wai.Handler.WarpTLS (
     , tlsSettingsMemory
     , tlsSettingsChain
     , tlsSettingsChainMemory
-    , tlsServerSupported
     -- * Accessors
     , certFile
     , keyFile
@@ -148,9 +147,6 @@ data TLSSettings = TLSSettings {
     -- Default: def
     --
     -- Since 3.0.2
-
-  , tlsServerSupported :: TLS.Supported
-
   , tlsServerDHEParams :: Maybe DH.Params
     -- ^ Configuration for ServerDHEParams
     -- more function lives in `cryptonite` package
@@ -188,7 +184,6 @@ defaultTlsSettings = TLSSettings {
   , tlsCiphers = ciphers
   , tlsWantClientCert = False
   , tlsServerHooks = def
-  , tlsServerSupported = def
   , tlsServerDHEParams = Nothing
   , tlsSessionManagerConfig = Nothing
   }
@@ -305,7 +300,7 @@ runTLSSocketAuth tlsset@TLSSettings{..} set sock app = do
     runTLSSocketAuth' tlsset set credential mgr sock app
 
 runTLSSocket' :: TLSSettings -> Settings -> TLS.Credential -> TLS.SessionManager -> Socket -> Application -> IO ()
-runTLSSocket' tlsset@TLSSettings{..} set credential mgr sock app = do
+runTLSSocket' tlsset@TLSSettings{..} set credential mgr sock app =
     runSettingsConnectionMakerSecure set get app
   where
     get = getter tlsset sock params
@@ -329,8 +324,7 @@ runTLSSocket' tlsset@TLSSettings{..} set credential mgr sock app = do
         TLS.sharedCredentials    = TLS.Credentials [credential]
       , TLS.sharedSessionManager = mgr
       }
-    supported = tlsServerSupported{TLS.supportedCiphers=tlsCiphers}
-    {-def { -- TLS.Supported
+    supported = def { -- TLS.Supported
         TLS.supportedVersions       = tlsAllowedVersions
       , TLS.supportedCiphers        = tlsCiphers
       , TLS.supportedCompressions   = [TLS.nullCompression]
@@ -339,9 +333,9 @@ runTLSSocket' tlsset@TLSSettings{..} set credential mgr sock app = do
       , TLS.supportedSession             = True
       , TLS.supportedFallbackScsv        = True
 #if MIN_VERSION_tls(1,5,0)
-      , TLS.supportedGroups              = [TLS.X25519,TLS.P256,TLS.P384]
+      , TLS.supportedGroups              = [TLS.X25519,TLS.P256,TLS.P384,TLS.FFDHE2048]
 #endif
-      } -}
+      }
 
 runTLSSocketAuth' :: TLSSettings -> Settings -> TLS.Credential -> TLS.SessionManager -> Socket -> (CertificateChain -> Application) -> IO ()
 runTLSSocketAuth' tlsset@TLSSettings{..} set credential mgr sock app =
@@ -355,6 +349,9 @@ runTLSSocketAuth' tlsset@TLSSettings{..} set credential mgr sock app =
       , TLS.serverHooks          = hooks
       , TLS.serverShared         = shared
       , TLS.serverSupported      = supported
+#if MIN_VERSION_tls(1,5,0)
+      , TLS.serverEarlyDataSize  = 2018
+#endif
       }
     -- Adding alpn to user's tlsServerHooks.
     hooks = tlsServerHooks {
@@ -365,7 +362,18 @@ runTLSSocketAuth' tlsset@TLSSettings{..} set credential mgr sock app =
         TLS.sharedCredentials    = TLS.Credentials [credential]
       , TLS.sharedSessionManager = mgr
       }
-    supported = tlsServerSupported{TLS.supportedCiphers=tlsCiphers}
+    supported = def { -- TLS.Supported
+        TLS.supportedVersions       = tlsAllowedVersions
+      , TLS.supportedCiphers        = tlsCiphers
+      , TLS.supportedCompressions   = [TLS.nullCompression]
+      , TLS.supportedSecureRenegotiation = True
+      , TLS.supportedClientInitiatedRenegotiation = False
+      , TLS.supportedSession             = True
+      , TLS.supportedFallbackScsv        = True
+#if MIN_VERSION_tls(1,5,0)
+      , TLS.supportedGroups              = [TLS.X25519,TLS.P256,TLS.P384,TLS.FFDHE2048]
+#endif
+      }
 
 alpn :: [S.ByteString] -> IO S.ByteString
 alpn xs
@@ -405,7 +413,6 @@ httpOverTls TLSSettings{..} s bs0 params = do
     writeBuf <- allocateBuffer bufferSize
     -- Creating a cache for leftover input data.
     ref <- I.newIORef ""
-
     tls <- getTLSinfo ctx
     return (conn ctx writeBuf ref, tls)
   where
@@ -449,44 +456,35 @@ httpOverTls TLSSettings{..} s bs0 params = do
         -- The cache is shared with recvBuf.
         recv cref = do
             cached <- I.readIORef cref
-            if cached /= ""
-              then do
+            if cached /= "" then do
                 I.writeIORef cref ""
                 return cached
-              else do 
-                x <- recv'
-                return x
-
+              else
+                recv'
 
         -- TLS version of recv (decrypting) without a cache.
         recv' = handle onEOF go
           where
-            onEOF e 
-              | Just TLS.Error_EOF <- fromException e       = 
-                  return S.empty
-              | Just ioe <- fromException e, isEOFError ioe = 
-                  return S.empty
-              | otherwise                                   = 
-                  throwIO e
+            onEOF e
+              | Just TLS.Error_EOF <- fromException e       = return S.empty
+              | Just ioe <- fromException e, isEOFError ioe = return S.empty
+              | otherwise                                   = throwIO e
             go = do
                 x <- TLS.recvData ctx
-                if S.null x
-                  then go
-                  else do
+                if S.null x then
+                    go
+                  else
                     return x
 
         -- TLS version of recv with a cache for leftover input data.
         -- The cache is shared with recvBuf.
         recvAuth cref = do
             cached <- I.readIORef cref
-            if cached /= ""
-              then do
+            if cached /= "" then do
                 I.writeIORef cref ""
                 return (CertificateChain [], cached)
-              else do 
-                x <- recvAuth'
-                return x
-
+              else 
+                recvAuth'
 
         -- TLS version of recv (decrypting) without a cache.
         recvAuth' = handle onEOF go
@@ -512,7 +510,7 @@ httpOverTls TLSSettings{..} s bs0 params = do
             I.writeIORef cref leftover
             return ret
 
-fill :: S.ByteString -> Buffer -> BufSize -> IO S.ByteString -> IO (Bool,S.ByteString)
+fill :: S.ByteString -> Buffer -> BufSize -> Recv -> IO (Bool,S.ByteString)
 fill bs0 buf0 siz0 recv
   | siz0 <= len0 = do
       let (bs, leftover) = S.splitAt siz0 bs0
